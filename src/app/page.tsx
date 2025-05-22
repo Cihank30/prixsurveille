@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, useMemo } from 'react';
 import Image from 'next/image';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,9 +12,12 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { predictTargetPriceProbability, type PredictTargetPriceProbabilityOutput, type PredictTargetPriceProbabilityInput } from '@/ai/flows/predict-target-price-probability';
 import { PriceHistoryChart } from '@/components/PriceHistoryChart';
-import { Tags, Link2, Search, DollarSign, CalendarClock, Target, Brain, Percent, CalendarCheck, MessageSquareText, LineChart, Loader2, AlertCircle, SheetIcon, Trash2, RefreshCw } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tags, Link2, Search, DollarSign, CalendarClock, Target, Brain, Percent, CalendarCheck, MessageSquareText, LineChart, Loader2, AlertCircle, SheetIcon, Trash2, RefreshCw, Edit3, Filter as FilterIcon, ArrowUpDown } from 'lucide-react';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
+import { cn } from "@/lib/utils";
 
 interface PriceEntry {
   date: string; // YYYY-MM-DD
@@ -39,11 +42,49 @@ interface TrackedProduct {
 }
 
 export default function PrixSurveillePage() {
-  const [newProductUrl, setNewProductUrl] = useState<string>(''); // Will now hold multiple URLs from textarea
+  const [newProductUrl, setNewProductUrl] = useState<string>('');
   const [trackedProducts, setTrackedProducts] = useState<TrackedProduct[]>([]);
   const [isBulkAdding, setIsBulkAdding] = useState(false);
-  
   const { toast } = useToast();
+
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [editingNameValue, setEditingNameValue] = useState<string>('');
+
+  const [sortOption, setSortOption] = useState<string>('lastScraped_desc'); // Default: Newest first
+  const [filterText, setFilterText] = useState<string>('');
+  const [filterTargetMetOnly, setFilterTargetMetOnly] = useState<boolean>(false);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+    if (typeof window !== 'undefined') {
+      const savedProducts = localStorage.getItem('trackedProducts');
+      if (savedProducts) {
+        try {
+          const parsedProducts = JSON.parse(savedProducts) as TrackedProduct[];
+          // Ensure lastScraped is a Date object
+          const productsWithDateObjects = parsedProducts.map(p => ({
+            ...p,
+            lastScraped: p.lastScraped ? new Date(p.lastScraped) : null,
+          }));
+          setTrackedProducts(productsWithDateObjects);
+        } catch (error) {
+          console.error("Failed to parse tracked products from localStorage", error);
+          localStorage.removeItem('trackedProducts'); // Clear corrupted data
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && trackedProducts.length > 0) { // Only save if there's something to save and not initial empty
+        localStorage.setItem('trackedProducts', JSON.stringify(trackedProducts));
+    } else if (typeof window !== 'undefined' && trackedProducts.length === 0 && localStorage.getItem('trackedProducts')) {
+        // If all products are removed, clear local storage
+        localStorage.removeItem('trackedProducts');
+    }
+  }, [trackedProducts]);
+
 
   const generateProductId = () => Date.now().toString() + Math.random().toString(36).substring(2, 9);
 
@@ -68,7 +109,7 @@ export default function PrixSurveillePage() {
 
     for (const url of urlsToProcess) {
       try {
-        new URL(url); // Basic URL validation
+        new URL(url); 
         const productId = generateProductId();
         const newProductEntry: TrackedProduct = {
           id: productId,
@@ -103,14 +144,13 @@ export default function PrixSurveillePage() {
 
     if (productsToAdd.length === 0) {
       setIsBulkAdding(false);
-      setNewProductUrl(''); // Clear textarea even if only invalid URLs were provided
+      setNewProductUrl('');
       return;
     }
     
     setTrackedProducts(prev => [...productsToAdd, ...prev]);
-    setNewProductUrl(''); // Clear textarea after processing
+    setNewProductUrl('');
 
-    // Simulate scraping for each newly added product
     productsToAdd.forEach(productEntry => {
       (async (productIdToScrape: string, urlToScrape: string) => {
         await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000)); 
@@ -120,7 +160,7 @@ export default function PrixSurveillePage() {
           const currentDate = new Date();
           const hostname = new URL(urlToScrape).hostname;
           const newProductName = `Produit Exemple de ${hostname}`;
-          const newProductImage = `https://placehold.co/600x400.png?text=${encodeURIComponent(newProductName)}`;
+          const newProductImage = `https://placehold.co/300x200.png?text=${encodeURIComponent(newProductName)}`;
           const newPriceEntryData: PriceEntry = { date: currentDate.toISOString().split('T')[0], price: newPrice };
 
           setTrackedProducts(prev => prev.map(p => 
@@ -251,7 +291,7 @@ export default function PrixSurveillePage() {
 
     try {
       const input: PredictTargetPriceProbabilityInput = {
-        priceHistory: priceHistory,
+        priceHistory: priceHistory.map(ph => ({date: ph.date, price: ph.price})), // Ensure correct structure
         targetPrice: targetPrice,
       };
       const result = await predictTargetPriceProbability(input);
@@ -273,8 +313,26 @@ export default function PrixSurveillePage() {
     toast({ title: "Produit retiré", description: "Le produit a été retiré de la liste de suivi." });
   };
 
+  const handleEditNameClick = (product: TrackedProduct) => {
+    setEditingProductId(product.id);
+    setEditingNameValue(product.name || '');
+  };
+
+  const handleSaveName = (productId: string) => {
+    setTrackedProducts(prev => prev.map(p => 
+      p.id === productId ? { ...p, name: editingNameValue.trim() || p.name } : p
+    ));
+    setEditingProductId(null);
+    toast({ title: "Nom mis à jour!"});
+  };
+
+  const handleCancelEditName = () => {
+    setEditingProductId(null);
+  };
+
+
   const getExportData = () => {
-    return trackedProducts.map(p => {
+    return displayedProducts.map(p => {
       const parsedTarget = parseFloat(p.targetPriceInput);
       const targetPriceDisplay = (!isNaN(parsedTarget) && parsedTarget > 0) ? parsedTarget.toFixed(2) : 'N/A';
       return {
@@ -283,7 +341,7 @@ export default function PrixSurveillePage() {
         'Prix Actuel (CAD)': p.currentPrice?.toFixed(2) || 'N/A',
         'Prix Cible (CAD)': targetPriceDisplay,
         'Probabilité Atteinte Cible (%)': p.prediction ? (p.prediction.probability * 100).toFixed(0) : 'N/A',
-        'Date de Vérification Suggérée': p.prediction ? format(new Date(p.prediction.suggestedCheckbackDate), "dd MMMM yyyy") : 'N/A',
+        'Date de Vérification Suggérée': p.prediction && p.prediction.suggestedCheckbackDate ? format(new Date(p.prediction.suggestedCheckbackDate), "dd MMMM yyyy") : 'N/A',
         'Raisonnement IA': p.prediction ? p.prediction.reasoning : 'N/A',
         'Dernière Vérification': p.lastScraped ? format(p.lastScraped, "dd/MM/yyyy HH:mm") : 'N/A',
         'Historique des Prix (JSON)': JSON.stringify(p.priceHistory),
@@ -292,7 +350,7 @@ export default function PrixSurveillePage() {
   };
 
   const handleExportToExcel = () => {
-    if (trackedProducts.length === 0) {
+    if (displayedProducts.length === 0) {
       toast({ title: "Aucun produit", description: "Il n'y a aucun produit à exporter.", variant: "default" });
       return;
     }
@@ -305,7 +363,7 @@ export default function PrixSurveillePage() {
   };
 
   const handleExportToCSV = () => {
-    if (trackedProducts.length === 0) {
+    if (displayedProducts.length === 0) {
       toast({ title: "Aucun produit", description: "Il n'y a aucun produit à exporter.", variant: "default" });
       return;
     }
@@ -335,6 +393,67 @@ export default function PrixSurveillePage() {
     }
     toast({ title: "Exportation CSV réussie!", description: "Les données ont été exportées." });
   };
+
+  const displayedProducts = useMemo(() => {
+    let products = [...trackedProducts];
+
+    // Filtering
+    if (filterText) {
+      products = products.filter(p => 
+        p.name?.toLowerCase().includes(filterText.toLowerCase()) || 
+        p.url.toLowerCase().includes(filterText.toLowerCase())
+      );
+    }
+    if (filterTargetMetOnly) {
+      products = products.filter(p => 
+        p.currentPrice !== null && 
+        parseFloat(p.targetPriceInput) > 0 && 
+        p.currentPrice <= parseFloat(p.targetPriceInput)
+      );
+    }
+
+    // Sorting
+    const [field, order] = sortOption.split('_');
+    products.sort((a, b) => {
+      let valA, valB;
+      switch (field) {
+        case 'name':
+          valA = a.name || '';
+          valB = b.name || '';
+          break;
+        case 'currentPrice':
+          valA = a.currentPrice ?? Infinity; // Unset prices go last/first depending on order
+          valB = b.currentPrice ?? Infinity;
+          break;
+        case 'targetPrice':
+          valA = parseFloat(a.targetPriceInput) || Infinity;
+          valB = parseFloat(b.targetPriceInput) || Infinity;
+          break;
+        case 'lastScraped':
+          valA = a.lastScraped ? new Date(a.lastScraped).getTime() : 0;
+          valB = b.lastScraped ? new Date(b.lastScraped).getTime() : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return order === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      }
+      return order === 'asc' ? (valA as number) - (valB as number) : (valB as number) - (valA as number);
+    });
+
+    return products;
+  }, [trackedProducts, sortOption, filterText, filterTargetMetOnly]);
+  
+  if (!isClient) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center py-8 px-4">
+        <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        <p className="text-muted-foreground mt-4">Chargement de l'application...</p>
+      </div>
+    );
+  }
 
 
   return (
@@ -380,45 +499,128 @@ export default function PrixSurveillePage() {
         </Card>
 
         {trackedProducts.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button onClick={handleExportToCSV} variant="outline" className="text-base">
-              <SheetIcon className="h-5 w-5 mr-2" />
-              Exporter vers CSV
-            </Button>
-            <Button onClick={handleExportToExcel} variant="outline" className="text-base">
-              <SheetIcon className="h-5 w-5 mr-2" />
-              Exporter vers Excel
-            </Button>
-          </div>
+          <Card className="shadow-md">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-xl">
+                <FilterIcon className="h-5 w-5 text-primary" />
+                Filtrer et Trier
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 sm:space-y-0 sm:flex sm:flex-wrap sm:gap-4 items-end">
+              <div className="flex-grow">
+                <Label htmlFor="filterText">Rechercher par nom/URL</Label>
+                <Input 
+                  id="filterText" 
+                  placeholder="Nom du produit ou URL..." 
+                  value={filterText} 
+                  onChange={(e) => setFilterText(e.target.value)} 
+                  className="mt-1"
+                />
+              </div>
+              <div className="flex-grow">
+                <Label htmlFor="sortOption">Trier par</Label>
+                <Select value={sortOption} onValueChange={setSortOption}>
+                  <SelectTrigger id="sortOption" className="mt-1">
+                    <SelectValue placeholder="Trier par..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="lastScraped_desc">Dernière vérification (Plus récent)</SelectItem>
+                    <SelectItem value="lastScraped_asc">Dernière vérification (Plus ancien)</SelectItem>
+                    <SelectItem value="name_asc">Nom (A-Z)</SelectItem>
+                    <SelectItem value="name_desc">Nom (Z-A)</SelectItem>
+                    <SelectItem value="currentPrice_asc">Prix Actuel (Bas-Haut)</SelectItem>
+                    <SelectItem value="currentPrice_desc">Prix Actuel (Haut-Bas)</SelectItem>
+                    <SelectItem value="targetPrice_asc">Prix Cible (Bas-Haut)</SelectItem>
+                    <SelectItem value="targetPrice_desc">Prix Cible (Haut-Bas)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center space-x-2 pt-2 sm:pt-0 sm:self-end sm:pb-[10px]"> {/* Adjusted padding for alignment */}
+                <Checkbox 
+                  id="filterTargetMet" 
+                  checked={filterTargetMetOnly} 
+                  onCheckedChange={(checked) => setFilterTargetMetOnly(checked as boolean)}
+                />
+                <Label htmlFor="filterTargetMet" className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                  Prix cible atteint
+                </Label>
+              </div>
+            </CardContent>
+            <CardFooter className="flex flex-wrap justify-end gap-2 pt-4">
+                 <Button onClick={handleExportToCSV} variant="outline" className="text-base">
+                   <SheetIcon className="h-5 w-5 mr-2" />
+                   Exporter vers CSV
+                 </Button>
+                 <Button onClick={handleExportToExcel} variant="outline" className="text-base">
+                   <SheetIcon className="h-5 w-5 mr-2" />
+                   Exporter vers Excel
+                 </Button>
+            </CardFooter>
+          </Card>
         )}
         
         <div className="space-y-6">
-          {trackedProducts.map((product) => (
-            <Card key={product.id} className="shadow-lg">
+          {displayedProducts.map((product) => {
+            const targetPriceMet = product.currentPrice !== null && parseFloat(product.targetPriceInput) > 0 && product.currentPrice <= parseFloat(product.targetPriceInput);
+            return (
+            <Card key={product.id} className={cn("shadow-lg", targetPriceMet && "border-2 border-green-500 ring-2 ring-green-300")}>
               <CardHeader>
                 <div className="flex justify-between items-start">
-                  <div className="flex-1 min-w-0"> {/* Added min-w-0 for better truncation handling */}
+                  <div className="flex-1 min-w-0">
                     {product.productImage && (
                       <div className="relative w-full h-40 sm:h-56 mb-4 rounded-lg overflow-hidden">
-                        <Image src={product.productImage} alt={product.name || 'Product image'} layout="fill" objectFit="cover" data-ai-hint="product image" />
+                        <Image src={product.productImage} alt={product.name || 'Product image'} fill style={{objectFit: 'cover'}} data-ai-hint="product clothing" />
                       </div>
                     )}
-                    <CardTitle className="text-xl md:text-2xl break-words">{product.name || product.url}</CardTitle> {/* Changed break-all to break-words */}
+                    <div className="flex items-center gap-1 mb-1">
+                      {editingProductId === product.id ? (
+                        <Input
+                          value={editingNameValue}
+                          onChange={(e) => setEditingNameValue(e.target.value)}
+                          onBlur={() => handleSaveName(product.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveName(product.id);
+                            if (e.key === 'Escape') handleCancelEditName();
+                          }}
+                          autoFocus
+                          className="text-xl md:text-2xl font-semibold h-auto py-0" // Adjusted styling
+                        />
+                      ) : (
+                        <CardTitle className="text-xl md:text-2xl break-words flex-grow cursor-pointer hover:text-primary/80" onClick={() => handleEditNameClick(product)}>
+                          {product.name || product.url}
+                        </CardTitle>
+                      )}
+                       {!editingProductId || editingProductId !== product.id ? (
+                          <Button variant="ghost" size="icon" onClick={() => handleEditNameClick(product)} aria-label="Modifier le nom du produit" className="flex-shrink-0">
+                             <Edit3 className="h-4 w-4 md:h-5 md:w-5" />
+                           </Button>
+                        ) : (
+                          <div className="flex gap-1">
+                             <Button variant="ghost" size="icon" onClick={() => handleSaveName(product.id)} aria-label="Enregistrer le nom">
+                               <CalendarCheck className="h-4 w-4 md:h-5 md:w-5 text-green-600" />
+                             </Button>
+                             <Button variant="ghost" size="icon" onClick={handleCancelEditName} aria-label="Annuler la modification">
+                               <MessageSquareText className="h-4 w-4 md:h-5 md:w-5 text-destructive" /> {/* Placeholder for XCircle */}
+                             </Button>
+                          </div>
+                        )
+                       }
+                    </div>
                     {product.lastScraped && (
-                      <CardDescription className="flex items-center gap-2 text-sm md:text-base mt-1">
+                      <CardDescription className="flex items-center gap-2 text-sm md:text-base">
                         <CalendarClock className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground" />
-                        Dernière vérification: {format(product.lastScraped, "dd/MM/yyyy HH:mm")}
+                        Dernière vérification: {format(new Date(product.lastScraped), "dd/MM/yyyy HH:mm")}
                       </CardDescription>
                     )}
                      <CardDescription className="text-xs text-muted-foreground truncate mt-1" title={product.url}>
                         URL: {product.url}
                       </CardDescription>
                   </div>
-                  <div className="flex flex-col items-end gap-2 ml-2 flex-shrink-0"> {/* Added flex-shrink-0 */}
+                  <div className="flex flex-col items-end gap-2 ml-2 flex-shrink-0">
                      <Button variant="ghost" size="icon" onClick={() => handleRemoveProduct(product.id)} aria-label="Retirer le produit">
                        <Trash2 className="h-5 w-5 text-destructive" />
                      </Button>
-                     {product.name && ( // Only show refresh if product has been initially scraped
+                     {product.name && (
                         <Button 
                           variant="outline" 
                           size="icon" 
@@ -491,7 +693,7 @@ export default function PrixSurveillePage() {
                               </div>
                               <div className="space-y-1">
                                 <Label className="text-sm md:text-base flex items-center gap-2"><CalendarCheck className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground" /> Date de vérification suggérée</Label>
-                                <p className="text-md md:text-lg text-foreground">{format(new Date(product.prediction.suggestedCheckbackDate), "dd MMMM yyyy")}</p>
+                                <p className="text-md md:text-lg text-foreground">{product.prediction.suggestedCheckbackDate ? format(new Date(product.prediction.suggestedCheckbackDate), "dd MMMM yyyy") : "N/A"}</p>
                               </div>
                               <div className="space-y-1">
                                 <Label className="text-sm md:text-base flex items-center gap-2"><MessageSquareText className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground" /> Raisonnement</Label>
@@ -520,17 +722,19 @@ export default function PrixSurveillePage() {
                 </CardContent>
               )}
               {product.name && product.currentPrice === null && !product.isLoadingScrape && !product.isLoadingRefresh && !product.scrapeError && (
-                <CardContent className="pt-6"> {/* Added pt-6 for spacing */}
+                <CardContent className="pt-6">
                   <p className="text-muted-foreground">En attente des informations du produit...</p>
                 </CardContent>
               )}
             </Card>
-          ))}
+          )})}
         </div>
-        {trackedProducts.length === 0 && !isBulkAdding && ( // Check isBulkAdding here too
+        {displayedProducts.length === 0 && !isBulkAdding && ( 
             <Card className="shadow-lg">
                 <CardContent className="pt-6">
-                    <p className="text-center text-muted-foreground">Aucun produit n'est actuellement suivi. Ajoutez une ou plusieurs URLs ci-dessus pour commencer.</p>
+                    <p className="text-center text-muted-foreground">
+                      {trackedProducts.length > 0 ? "Aucun produit ne correspond à vos filtres." : "Aucun produit n'est actuellement suivi. Ajoutez une ou plusieurs URLs ci-dessus pour commencer."}
+                    </p>
                 </CardContent>
             </Card>
         )}
@@ -542,3 +746,4 @@ export default function PrixSurveillePage() {
     </div>
   );
 }
+
