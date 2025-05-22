@@ -5,6 +5,7 @@ import { useState, useEffect, FormEvent } from 'react';
 import Image from 'next/image';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -38,9 +39,9 @@ interface TrackedProduct {
 }
 
 export default function PrixSurveillePage() {
-  const [newProductUrl, setNewProductUrl] = useState<string>('');
+  const [newProductUrl, setNewProductUrl] = useState<string>(''); // Will now hold multiple URLs from textarea
   const [trackedProducts, setTrackedProducts] = useState<TrackedProduct[]>([]);
-  const [globalScrapeError, setGlobalScrapeError] = useState<string | null>(null);
+  const [isBulkAdding, setIsBulkAdding] = useState(false);
   
   const { toast } = useToast();
 
@@ -48,75 +49,108 @@ export default function PrixSurveillePage() {
 
   const handleUrlSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!newProductUrl) {
-      setGlobalScrapeError("Veuillez entrer une URL de produit.");
-      return;
-    }
-    try {
-      new URL(newProductUrl); // Basic URL validation
-    } catch (e) {
-      setGlobalScrapeError("URL invalide. Veuillez vérifier le format.");
-      toast({ title: "Erreur", description: "URL invalide.", variant: "destructive" });
+    if (!newProductUrl.trim()) {
+      toast({ title: "Aucune URL fournie", description: "Veuillez entrer au moins une URL de produit.", variant: "destructive" });
       return;
     }
 
-    setGlobalScrapeError(null);
-    const productId = generateProductId();
-    const newProductEntry: TrackedProduct = {
-      id: productId,
-      url: newProductUrl,
-      name: null,
-      currentPrice: null,
-      productImage: null,
-      lastScraped: null,
-      priceHistory: [],
-      targetPriceInput: '',
-      prediction: null,
-      isLoadingScrape: true,
-      isLoadingPrediction: false,
-      isLoadingRefresh: false,
-      scrapeError: null,
-      predictionError: null,
-    };
+    setIsBulkAdding(true);
+    const urlsToProcess = newProductUrl.split('\n').map(url => url.trim()).filter(url => url);
 
-    setTrackedProducts(prev => [newProductEntry, ...prev]);
-    setNewProductUrl(''); // Clear input after submission
-
-    // Simulate scraping
-    await new Promise(resolve => setTimeout(resolve, 1500)); 
-
-    try {
-      const newPrice = Math.floor(Math.random() * 180) + 20; // Random price between 20-200
-      const currentDate = new Date();
-      const hostname = new URL(newProductUrl).hostname;
-      const newProductName = `Produit Exemple de ${hostname}`;
-      const newProductImage = `https://placehold.co/600x400.png?text=${encodeURIComponent(newProductName)}`;
-      const newPriceEntryData: PriceEntry = { date: currentDate.toISOString().split('T')[0], price: newPrice };
-
-      setTrackedProducts(prev => prev.map(p => 
-        p.id === productId ? {
-          ...p,
-          name: newProductName,
-          currentPrice: newPrice,
-          lastScraped: currentDate,
-          productImage: newProductImage,
-          priceHistory: [newPriceEntryData],
-          isLoadingScrape: false,
-        } : p
-      ));
-      
-      toast({ title: "Produit suivi!", description: `${newProductName} - Prix: CAD ${newPrice.toFixed(2)}` });
-
-    } catch (error) {
-      setTrackedProducts(prev => prev.map(p => 
-        p.id === productId ? {
-          ...p,
-          scrapeError: "Impossible de récupérer les informations du produit. Le site n'est peut-être pas supporté ou l'URL est incorrecte.",
-          isLoadingScrape: false,
-        } : p
-      ));
-      toast({ title: "Erreur de scraping", description: "Détails de l'erreur simulée.", variant: "destructive" });
+    if (urlsToProcess.length === 0) {
+      toast({ title: "Aucune URL valide", description: "Veuillez vérifier les URLs entrées. Séparez chaque URL par un saut de ligne.", variant: "destructive" });
+      setIsBulkAdding(false);
+      return;
     }
+
+    const productsToAdd: TrackedProduct[] = [];
+    const invalidUrlsFound: string[] = [];
+
+    for (const url of urlsToProcess) {
+      try {
+        new URL(url); // Basic URL validation
+        const productId = generateProductId();
+        const newProductEntry: TrackedProduct = {
+          id: productId,
+          url: url,
+          name: null,
+          currentPrice: null,
+          productImage: null,
+          lastScraped: null,
+          priceHistory: [],
+          targetPriceInput: '',
+          prediction: null,
+          isLoadingScrape: true,
+          isLoadingPrediction: false,
+          isLoadingRefresh: false,
+          scrapeError: null,
+          predictionError: null,
+        };
+        productsToAdd.push(newProductEntry);
+      } catch (e) {
+        invalidUrlsFound.push(url);
+      }
+    }
+
+    if (invalidUrlsFound.length > 0) {
+      toast({
+        title: "Certaines URLs sont invalides",
+        description: `Les URLs suivantes n'ont pas pu être traitées : ${invalidUrlsFound.join(', ')}. Veuillez vérifier leur format.`,
+        variant: "destructive",
+        duration: 7000,
+      });
+    }
+
+    if (productsToAdd.length === 0) {
+      setIsBulkAdding(false);
+      setNewProductUrl(''); // Clear textarea even if only invalid URLs were provided
+      return;
+    }
+    
+    setTrackedProducts(prev => [...productsToAdd, ...prev]);
+    setNewProductUrl(''); // Clear textarea after processing
+
+    // Simulate scraping for each newly added product
+    productsToAdd.forEach(productEntry => {
+      (async (productIdToScrape: string, urlToScrape: string) => {
+        await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000)); 
+
+        try {
+          const newPrice = Math.floor(Math.random() * 180) + 20;
+          const currentDate = new Date();
+          const hostname = new URL(urlToScrape).hostname;
+          const newProductName = `Produit Exemple de ${hostname}`;
+          const newProductImage = `https://placehold.co/600x400.png?text=${encodeURIComponent(newProductName)}`;
+          const newPriceEntryData: PriceEntry = { date: currentDate.toISOString().split('T')[0], price: newPrice };
+
+          setTrackedProducts(prev => prev.map(p => 
+            p.id === productIdToScrape ? {
+              ...p,
+              name: newProductName,
+              currentPrice: newPrice,
+              lastScraped: currentDate,
+              productImage: newProductImage,
+              priceHistory: [newPriceEntryData],
+              isLoadingScrape: false,
+            } : p
+          ));
+          
+          toast({ title: "Produit suivi!", description: `${newProductName} - Prix: CAD ${newPrice.toFixed(2)}` });
+
+        } catch (error) {
+          setTrackedProducts(prev => prev.map(p => 
+            p.id === productIdToScrape ? {
+              ...p,
+              scrapeError: "Impossible de récupérer les informations du produit. Le site n'est peut-être pas supporté ou l'URL est incorrecte.",
+              isLoadingScrape: false,
+            } : p
+          ));
+          toast({ title: "Erreur de scraping", description: `Détails de l'erreur simulée pour ${urlToScrape}.`, variant: "destructive" });
+        }
+      })(productEntry.id, productEntry.url);
+    });
+    
+    setIsBulkAdding(false); 
   };
 
   const handleRefreshPrice = async (productId: string) => {
@@ -124,33 +158,36 @@ export default function PrixSurveillePage() {
       p.id === productId ? { ...p, isLoadingRefresh: true, scrapeError: null } : p
     ));
 
-    // Simulate re-scraping
     await new Promise(resolve => setTimeout(resolve, 1000));
     const product = trackedProducts.find(p => p.id === productId);
     if (!product) return;
 
     try {
       const oldPrice = product.currentPrice;
-      // Simulate a new price, sometimes the same, sometimes different
       let newPrice;
-      if (Math.random() < 0.3) { // 30% chance price stays the same
+      if (Math.random() < 0.3) {
         newPrice = oldPrice !== null ? oldPrice : Math.floor(Math.random() * 180) + 20;
-      } else { // 70% chance price changes
+      } else {
         newPrice = Math.floor(Math.random() * 180) + 20; 
       }
 
       const currentDate = new Date();
       const newPriceEntryData: PriceEntry = { date: currentDate.toISOString().split('T')[0], price: newPrice };
       
-      setTrackedProducts(prev => prev.map(p => 
-        p.id === productId ? {
-          ...p,
-          currentPrice: newPrice,
-          lastScraped: currentDate,
-          priceHistory: [...p.priceHistory, newPriceEntryData].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30), // Keep last 30 entries, sorted
-          isLoadingRefresh: false,
-        } : p
-      ));
+      let updatedProductHistory: PriceEntry[] = [];
+      setTrackedProducts(prev => prev.map(p => {
+        if (p.id === productId) {
+          updatedProductHistory = [...p.priceHistory, newPriceEntryData].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30);
+          return {
+            ...p,
+            currentPrice: newPrice,
+            lastScraped: currentDate,
+            priceHistory: updatedProductHistory,
+            isLoadingRefresh: false,
+          };
+        }
+        return p;
+      }));
 
       if (oldPrice !== null && newPrice !== oldPrice) {
         const priceChange = newPrice - oldPrice;
@@ -170,13 +207,9 @@ export default function PrixSurveillePage() {
         });
       }
       
-      // Re-trigger prediction if target price is set
-      const updatedProduct = trackedProducts.find(p => p.id === productId); // get the latest state
-      if (updatedProduct) {
-        const targetPriceNum = parseFloat(updatedProduct.targetPriceInput);
-        if (!isNaN(targetPriceNum) && targetPriceNum > 0) {
-          triggerPrediction(productId, targetPriceNum, [...updatedProduct.priceHistory, newPriceEntryData]);
-        }
+      const targetPriceNum = parseFloat(product.targetPriceInput);
+      if (!isNaN(targetPriceNum) && targetPriceNum > 0) {
+        triggerPrediction(productId, targetPriceNum, updatedProductHistory);
       }
 
     } catch (error) {
@@ -218,7 +251,7 @@ export default function PrixSurveillePage() {
 
     try {
       const input: PredictTargetPriceProbabilityInput = {
-        priceHistory: priceHistory, // Use the provided price history
+        priceHistory: priceHistory,
         targetPrice: targetPrice,
       };
       const result = await predictTargetPriceProbability(input);
@@ -281,10 +314,10 @@ export default function PrixSurveillePage() {
 
     const headers = Object.keys(dataToExport[0]);
     const csvRows = [
-      headers.join(','), // header row
+      headers.join(','),
       ...dataToExport.map(row => 
         headers.map(fieldName => 
-          JSON.stringify(row[fieldName as keyof typeof row], (key, value) => value === null || value === undefined ? '' : value) // Ensure proper quoting and handling of null/undefined
+          JSON.stringify(row[fieldName as keyof typeof row], (key, value) => value === null || value === undefined ? '' : value)
         ).join(',')
       )
     ];
@@ -319,39 +352,35 @@ export default function PrixSurveillePage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-2xl">
               <Link2 className="h-6 w-6 text-primary" />
-              Suivre un nouveau produit
+              Suivre de nouveaux produits
             </CardTitle>
-            <CardDescription>Entrez l'URL du produit que vous souhaitez surveiller.</CardDescription>
+            <CardDescription>Entrez les URLs des produits (une par ligne) que vous souhaitez surveiller.</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleUrlSubmit} className="space-y-4">
               <div>
-                <Label htmlFor="newProductUrl" className="text-base">URL du produit</Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <Input
-                    id="newProductUrl"
-                    type="url"
-                    placeholder="https://www.example.com/product-page"
+                <Label htmlFor="newProductUrls" className="text-base">URLs des produits</Label>
+                <div className="flex flex-col sm:flex-row items-start sm:items-end gap-2 mt-1">
+                  <Textarea
+                    id="newProductUrls"
+                    placeholder="https://www.example.com/produit-A&#x0a;https://www.example.ca/item-B&#x0a;https://www.anotherstore.com/product-C"
                     value={newProductUrl}
                     onChange={(e) => setNewProductUrl(e.target.value)}
-                    className="text-base"
-                    required
+                    className="text-base min-h-[80px] flex-grow"
+                    rows={3}
                   />
-                  <Button type="submit" disabled={trackedProducts.some(p => p.isLoadingScrape)} className="text-base px-6">
-                    {trackedProducts.some(p => p.isLoadingScrape && p.url === newProductUrl) ? <Loader2 className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5 mr-2" />}
+                  <Button type="submit" disabled={isBulkAdding} className="text-base px-6 w-full sm:w-auto">
+                    {isBulkAdding ? <Loader2 className="h-5 w-5 animate-spin" /> : <Search className="h-5 w-5 mr-2" />}
                     Suivre
                   </Button>
                 </div>
               </div>
-              {globalScrapeError && (
-                <p className="text-sm text-destructive flex items-center gap-1"><AlertCircle size={16}/> {globalScrapeError}</p>
-              )}
             </form>
           </CardContent>
         </Card>
 
         {trackedProducts.length > 0 && (
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button onClick={handleExportToCSV} variant="outline" className="text-base">
               <SheetIcon className="h-5 w-5 mr-2" />
               Exporter vers CSV
@@ -368,25 +397,28 @@ export default function PrixSurveillePage() {
             <Card key={product.id} className="shadow-lg">
               <CardHeader>
                 <div className="flex justify-between items-start">
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0"> {/* Added min-w-0 for better truncation handling */}
                     {product.productImage && (
                       <div className="relative w-full h-40 sm:h-56 mb-4 rounded-lg overflow-hidden">
                         <Image src={product.productImage} alt={product.name || 'Product image'} layout="fill" objectFit="cover" data-ai-hint="product image" />
                       </div>
                     )}
-                    <CardTitle className="text-xl md:text-2xl break-all">{product.name || product.url}</CardTitle>
+                    <CardTitle className="text-xl md:text-2xl break-words">{product.name || product.url}</CardTitle> {/* Changed break-all to break-words */}
                     {product.lastScraped && (
-                      <CardDescription className="flex items-center gap-2 text-sm md:text-base">
+                      <CardDescription className="flex items-center gap-2 text-sm md:text-base mt-1">
                         <CalendarClock className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground" />
                         Dernière vérification: {format(product.lastScraped, "dd/MM/yyyy HH:mm")}
                       </CardDescription>
                     )}
+                     <CardDescription className="text-xs text-muted-foreground truncate mt-1" title={product.url}>
+                        URL: {product.url}
+                      </CardDescription>
                   </div>
-                  <div className="flex flex-col items-end gap-2 ml-2">
+                  <div className="flex flex-col items-end gap-2 ml-2 flex-shrink-0"> {/* Added flex-shrink-0 */}
                      <Button variant="ghost" size="icon" onClick={() => handleRemoveProduct(product.id)} aria-label="Retirer le produit">
                        <Trash2 className="h-5 w-5 text-destructive" />
                      </Button>
-                     {product.name && (
+                     {product.name && ( // Only show refresh if product has been initially scraped
                         <Button 
                           variant="outline" 
                           size="icon" 
@@ -404,7 +436,7 @@ export default function PrixSurveillePage() {
                     <Loader2 className="h-5 w-5 animate-spin" /> Recherche du produit...
                   </div>
                 )}
-                {product.scrapeError && (
+                {product.scrapeError && !product.isLoadingScrape && (
                   <p className="text-sm text-destructive flex items-center gap-1 mt-2"><AlertCircle size={16}/> {product.scrapeError}</p>
                 )}
               </CardHeader>
@@ -488,17 +520,17 @@ export default function PrixSurveillePage() {
                 </CardContent>
               )}
               {product.name && product.currentPrice === null && !product.isLoadingScrape && !product.isLoadingRefresh && !product.scrapeError && (
-                <CardContent>
+                <CardContent className="pt-6"> {/* Added pt-6 for spacing */}
                   <p className="text-muted-foreground">En attente des informations du produit...</p>
                 </CardContent>
               )}
             </Card>
           ))}
         </div>
-        {trackedProducts.length === 0 && !trackedProducts.some(p => p.isLoadingScrape) && (
+        {trackedProducts.length === 0 && !isBulkAdding && ( // Check isBulkAdding here too
             <Card className="shadow-lg">
                 <CardContent className="pt-6">
-                    <p className="text-center text-muted-foreground">Aucun produit n'est actuellement suivi. Ajoutez une URL ci-dessus pour commencer.</p>
+                    <p className="text-center text-muted-foreground">Aucun produit n'est actuellement suivi. Ajoutez une ou plusieurs URLs ci-dessus pour commencer.</p>
                 </CardContent>
             </Card>
         )}
@@ -510,4 +542,3 @@ export default function PrixSurveillePage() {
     </div>
   );
 }
-
