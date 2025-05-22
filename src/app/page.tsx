@@ -103,7 +103,7 @@ export default function PrixSurveillePage() {
         } : p
       ));
       
-      toast({ title: "Produit suivi!", description: `${newProductName} - Prix: €${newPrice}` });
+      toast({ title: "Produit suivi!", description: `${newProductName} - Prix: CAD ${newPrice.toFixed(2)}` });
 
       // Trigger prediction if target price was already set (e.g. if this was a re-scrape feature)
       const updatedProduct = trackedProducts.find(p => p.id === productId);
@@ -187,8 +187,8 @@ export default function PrixSurveillePage() {
       return {
         'Nom du Produit': p.name || 'N/A',
         'URL': p.url,
-        'Prix Actuel (€)': p.currentPrice?.toFixed(2) || 'N/A',
-        'Prix Cible (€)': targetPriceDisplay,
+        'Prix Actuel (CAD)': p.currentPrice?.toFixed(2) || 'N/A',
+        'Prix Cible (CAD)': targetPriceDisplay,
         'Probabilité Atteinte Cible (%)': p.prediction ? (p.prediction.probability * 100).toFixed(0) : 'N/A',
         'Date de Vérification Suggérée': p.prediction ? format(new Date(p.prediction.suggestedCheckbackDate), "dd MMMM yyyy") : 'N/A',
         'Raisonnement IA': p.prediction ? p.prediction.reasoning : 'N/A',
@@ -296,13 +296,13 @@ export default function PrixSurveillePage() {
                 <CardContent className="space-y-4">
                   <div className="flex items-baseline gap-2">
                     <DollarSign className="h-7 w-7 md:h-8 md:w-8 text-primary" />
-                    <p className="text-3xl md:text-4xl font-bold text-foreground">€{product.currentPrice.toFixed(2)}</p>
+                    <p className="text-3xl md:text-4xl font-bold text-foreground">CAD {product.currentPrice.toFixed(2)}</p>
                   </div>
                   
                   <div>
                     <Label htmlFor={`targetPrice-${product.id}`} className="text-sm md:text-base flex items-center gap-2">
                       <Target className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground"/>
-                      Prix Cible Désiré (€)
+                      Prix Cible Désiré (CAD)
                     </Label>
                     <Input
                       id={`targetPrice-${product.id}`}
@@ -323,7 +323,7 @@ export default function PrixSurveillePage() {
                             <Brain className="h-5 w-5 md:h-6 md:w-6 text-primary" />
                             Prédiction de Prix (IA)
                           </CardTitle>
-                           {parseFloat(product.targetPriceInput) > 0 && <CardDescription>Probabilité d'atteindre €{parseFloat(product.targetPriceInput).toFixed(2)} et quand vérifier.</CardDescription>}
+                           {parseFloat(product.targetPriceInput) > 0 && <CardDescription>Probabilité d'atteindre CAD {parseFloat(product.targetPriceInput).toFixed(2)} et quand vérifier.</CardDescription>}
                         </CardHeader>
                         <CardContent className="space-y-3">
                           {product.isLoadingPrediction && (

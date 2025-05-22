@@ -18,7 +18,7 @@ interface PriceHistoryChartProps {
 
 const chartConfig = {
   price: {
-    label: "Prix (€)",
+    label: "Prix (CAD)",
     color: "hsl(var(--primary))",
   },
 } satisfies ChartConfig
@@ -57,7 +57,7 @@ export function PriceHistoryChart({ data }: PriceHistoryChartProps) {
           tickLine={false}
           axisLine={false}
           tickMargin={8}
-          tickFormatter={(value) => `€${value}`}
+          tickFormatter={(value) => `CAD ${value}`}
           domain={['dataMin - 10', 'dataMax + 10']}
         />
         <ChartTooltip
