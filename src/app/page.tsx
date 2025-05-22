@@ -11,7 +11,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { predictTargetPriceProbability, type PredictTargetPriceProbabilityOutput, type PredictTargetPriceProbabilityInput } from '@/ai/flows/predict-target-price-probability';
 import { PriceHistoryChart } from '@/components/PriceHistoryChart';
-import { Tags, Link2, Search, DollarSign, CalendarClock, Target, Brain, Percent, CalendarCheck, MessageSquareText, LineChart, Loader2, AlertCircle, SheetIcon, Trash2 } from 'lucide-react';
+import { Tags, Link2, Search, DollarSign, CalendarClock, Target, Brain, Percent, CalendarCheck, MessageSquareText, LineChart, Loader2, AlertCircle, SheetIcon, Trash2, RefreshCw } from 'lucide-react';
 import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
 
@@ -32,6 +32,7 @@ interface TrackedProduct {
   prediction: PredictTargetPriceProbabilityOutput | null;
   isLoadingScrape: boolean;
   isLoadingPrediction: boolean;
+  isLoadingRefresh: boolean;
   scrapeError: string | null;
   predictionError: string | null;
 }
@@ -73,6 +74,7 @@ export default function PrixSurveillePage() {
       prediction: null,
       isLoadingScrape: true,
       isLoadingPrediction: false,
+      isLoadingRefresh: false,
       scrapeError: null,
       predictionError: null,
     };
@@ -105,15 +107,6 @@ export default function PrixSurveillePage() {
       
       toast({ title: "Produit suivi!", description: `${newProductName} - Prix: CAD ${newPrice.toFixed(2)}` });
 
-      // Trigger prediction if target price was already set (e.g. if this was a re-scrape feature)
-      const updatedProduct = trackedProducts.find(p => p.id === productId);
-      if (updatedProduct) {
-        const targetPriceNum = parseFloat(updatedProduct.targetPriceInput);
-        if (!isNaN(targetPriceNum) && targetPriceNum > 0) {
-          triggerPrediction(productId, targetPriceNum);
-        }
-      }
-
     } catch (error) {
       setTrackedProducts(prev => prev.map(p => 
         p.id === productId ? {
@@ -126,21 +119,93 @@ export default function PrixSurveillePage() {
     }
   };
 
+  const handleRefreshPrice = async (productId: string) => {
+    setTrackedProducts(prev => prev.map(p => 
+      p.id === productId ? { ...p, isLoadingRefresh: true, scrapeError: null } : p
+    ));
+
+    // Simulate re-scraping
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const product = trackedProducts.find(p => p.id === productId);
+    if (!product) return;
+
+    try {
+      const oldPrice = product.currentPrice;
+      // Simulate a new price, sometimes the same, sometimes different
+      let newPrice;
+      if (Math.random() < 0.3) { // 30% chance price stays the same
+        newPrice = oldPrice !== null ? oldPrice : Math.floor(Math.random() * 180) + 20;
+      } else { // 70% chance price changes
+        newPrice = Math.floor(Math.random() * 180) + 20; 
+      }
+
+      const currentDate = new Date();
+      const newPriceEntryData: PriceEntry = { date: currentDate.toISOString().split('T')[0], price: newPrice };
+      
+      setTrackedProducts(prev => prev.map(p => 
+        p.id === productId ? {
+          ...p,
+          currentPrice: newPrice,
+          lastScraped: currentDate,
+          priceHistory: [...p.priceHistory, newPriceEntryData].sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30), // Keep last 30 entries, sorted
+          isLoadingRefresh: false,
+        } : p
+      ));
+
+      if (oldPrice !== null && newPrice !== oldPrice) {
+        const priceChange = newPrice - oldPrice;
+        toast({ 
+          title: "Prix mis à jour!", 
+          description: `${product.name}: CAD ${newPrice.toFixed(2)} ( ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)} CAD )` 
+        });
+      } else if (oldPrice === null) {
+         toast({ 
+          title: "Prix récupéré!", 
+          description: `${product.name}: CAD ${newPrice.toFixed(2)}` 
+        });
+      } else {
+         toast({ 
+          title: "Prix vérifié", 
+          description: `${product.name}: Pas de changement de prix (CAD ${newPrice.toFixed(2)})` 
+        });
+      }
+      
+      // Re-trigger prediction if target price is set
+      const updatedProduct = trackedProducts.find(p => p.id === productId); // get the latest state
+      if (updatedProduct) {
+        const targetPriceNum = parseFloat(updatedProduct.targetPriceInput);
+        if (!isNaN(targetPriceNum) && targetPriceNum > 0) {
+          triggerPrediction(productId, targetPriceNum, [...updatedProduct.priceHistory, newPriceEntryData]);
+        }
+      }
+
+    } catch (error) {
+      setTrackedProducts(prev => prev.map(p => 
+        p.id === productId ? {
+          ...p,
+          scrapeError: "Impossible de rafraîchir le prix.",
+          isLoadingRefresh: false,
+        } : p
+      ));
+      toast({ title: "Erreur de rafraîchissement", description: `Impossible de mettre à jour le prix pour ${product.name}.`, variant: "destructive" });
+    }
+  };
+
   const handleTargetPriceChange = (productId: string, value: string) => {
     setTrackedProducts(prev => prev.map(p => 
-      p.id === productId ? { ...p, targetPriceInput: value, prediction: null, predictionError: null } : p // Reset prediction when target changes
+      p.id === productId ? { ...p, targetPriceInput: value, prediction: null, predictionError: null } : p 
     ));
     
     const targetPriceNum = parseFloat(value);
     const product = trackedProducts.find(p => p.id === productId);
     if (product && !isNaN(targetPriceNum) && targetPriceNum > 0 && product.priceHistory.length > 0) {
-      triggerPrediction(productId, targetPriceNum);
+      triggerPrediction(productId, targetPriceNum, product.priceHistory);
     }
   };
 
-  const triggerPrediction = async (productId: string, targetPrice: number) => {
+  const triggerPrediction = async (productId: string, targetPrice: number, priceHistory: PriceEntry[]) => {
     const product = trackedProducts.find(p => p.id === productId);
-    if (!product || product.priceHistory.length === 0) {
+    if (!product || priceHistory.length === 0) {
       setTrackedProducts(prev => prev.map(p => 
         p.id === productId ? { ...p, predictionError: "Historique de prix manquant pour la prédiction." } : p
       ));
@@ -153,7 +218,7 @@ export default function PrixSurveillePage() {
 
     try {
       const input: PredictTargetPriceProbabilityInput = {
-        priceHistory: product.priceHistory,
+        priceHistory: priceHistory, // Use the provided price history
         targetPrice: targetPrice,
       };
       const result = await predictTargetPriceProbability(input);
@@ -175,13 +240,8 @@ export default function PrixSurveillePage() {
     toast({ title: "Produit retiré", description: "Le produit a été retiré de la liste de suivi." });
   };
 
-  const handleExportToExcel = () => {
-    if (trackedProducts.length === 0) {
-      toast({ title: "Aucun produit", description: "Il n'y a aucun produit à exporter.", variant: "default" });
-      return;
-    }
-
-    const dataToExport = trackedProducts.map(p => {
+  const getExportData = () => {
+    return trackedProducts.map(p => {
       const parsedTarget = parseFloat(p.targetPriceInput);
       const targetPriceDisplay = (!isNaN(parsedTarget) && parsedTarget > 0) ? parsedTarget.toFixed(2) : 'N/A';
       return {
@@ -196,12 +256,51 @@ export default function PrixSurveillePage() {
         'Historique des Prix (JSON)': JSON.stringify(p.priceHistory),
       };
     });
+  };
 
+  const handleExportToExcel = () => {
+    if (trackedProducts.length === 0) {
+      toast({ title: "Aucun produit", description: "Il n'y a aucun produit à exporter.", variant: "default" });
+      return;
+    }
+    const dataToExport = getExportData();
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "PrixSurveille");
     XLSX.writeFile(workbook, "PrixSurveille_Export.xlsx");
-    toast({ title: "Exportation réussie!", description: "Les données ont été exportées vers Excel." });
+    toast({ title: "Exportation Excel réussie!", description: "Les données ont été exportées." });
+  };
+
+  const handleExportToCSV = () => {
+    if (trackedProducts.length === 0) {
+      toast({ title: "Aucun produit", description: "Il n'y a aucun produit à exporter.", variant: "default" });
+      return;
+    }
+    const dataToExport = getExportData();
+    if (dataToExport.length === 0) return;
+
+    const headers = Object.keys(dataToExport[0]);
+    const csvRows = [
+      headers.join(','), // header row
+      ...dataToExport.map(row => 
+        headers.map(fieldName => 
+          JSON.stringify(row[fieldName as keyof typeof row], (key, value) => value === null || value === undefined ? '' : value) // Ensure proper quoting and handling of null/undefined
+        ).join(',')
+      )
+    ];
+    const csvString = csvRows.join('\r\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    if (link.download !== undefined) {
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute("download", "PrixSurveille_Export.csv");
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+    toast({ title: "Exportation CSV réussie!", description: "Les données ont été exportées." });
   };
 
 
@@ -252,7 +351,11 @@ export default function PrixSurveillePage() {
         </Card>
 
         {trackedProducts.length > 0 && (
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
+            <Button onClick={handleExportToCSV} variant="outline" className="text-base">
+              <SheetIcon className="h-5 w-5 mr-2" />
+              Exporter vers CSV
+            </Button>
             <Button onClick={handleExportToExcel} variant="outline" className="text-base">
               <SheetIcon className="h-5 w-5 mr-2" />
               Exporter vers Excel
@@ -265,13 +368,13 @@ export default function PrixSurveillePage() {
             <Card key={product.id} className="shadow-lg">
               <CardHeader>
                 <div className="flex justify-between items-start">
-                  <div>
+                  <div className="flex-1">
                     {product.productImage && (
                       <div className="relative w-full h-40 sm:h-56 mb-4 rounded-lg overflow-hidden">
                         <Image src={product.productImage} alt={product.name || 'Product image'} layout="fill" objectFit="cover" data-ai-hint="product image" />
                       </div>
                     )}
-                    <CardTitle className="text-xl md:text-2xl">{product.name || product.url}</CardTitle>
+                    <CardTitle className="text-xl md:text-2xl break-all">{product.name || product.url}</CardTitle>
                     {product.lastScraped && (
                       <CardDescription className="flex items-center gap-2 text-sm md:text-base">
                         <CalendarClock className="h-4 w-4 md:h-5 md:w-5 text-muted-foreground" />
@@ -279,9 +382,22 @@ export default function PrixSurveillePage() {
                       </CardDescription>
                     )}
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => handleRemoveProduct(product.id)} aria-label="Retirer le produit">
-                    <Trash2 className="h-5 w-5 text-destructive" />
-                  </Button>
+                  <div className="flex flex-col items-end gap-2 ml-2">
+                     <Button variant="ghost" size="icon" onClick={() => handleRemoveProduct(product.id)} aria-label="Retirer le produit">
+                       <Trash2 className="h-5 w-5 text-destructive" />
+                     </Button>
+                     {product.name && (
+                        <Button 
+                          variant="outline" 
+                          size="icon" 
+                          onClick={() => handleRefreshPrice(product.id)} 
+                          disabled={product.isLoadingRefresh || product.isLoadingScrape}
+                          aria-label="Rafraîchir le prix"
+                        >
+                          {product.isLoadingRefresh ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
+                        </Button>
+                     )}
+                  </div>
                 </div>
                  {product.isLoadingScrape && (
                   <div className="flex items-center gap-2 text-muted-foreground mt-2">
@@ -312,7 +428,7 @@ export default function PrixSurveillePage() {
                       onChange={(e) => handleTargetPriceChange(product.id, e.target.value)}
                       className="mt-1 text-sm md:text-base"
                       step="0.01"
-                      disabled={product.isLoadingPrediction}
+                      disabled={product.isLoadingPrediction || product.isLoadingRefresh || product.isLoadingScrape}
                     />
                   </div>
 
@@ -371,7 +487,7 @@ export default function PrixSurveillePage() {
                   )}
                 </CardContent>
               )}
-              {product.name && product.currentPrice === null && !product.isLoadingScrape && !product.scrapeError && (
+              {product.name && product.currentPrice === null && !product.isLoadingScrape && !product.isLoadingRefresh && !product.scrapeError && (
                 <CardContent>
                   <p className="text-muted-foreground">En attente des informations du produit...</p>
                 </CardContent>
@@ -394,3 +510,4 @@ export default function PrixSurveillePage() {
     </div>
   );
 }
+
