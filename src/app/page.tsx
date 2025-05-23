@@ -1,6 +1,15 @@
 
 "use client";
 
+import type { AppProps } from 'next/app';
+import { Analytics } from '@vercel/analytics/next';
+ 
+function MyApp({ Component, pageProps }: AppProps) {
+  return (
+    <><Component {...pageProps} /><Analytics /></>
+  );
+}
+
 import { useState, useEffect, FormEvent, useMemo } from 'react';
 import Image from 'next/image';
 import { Button } from "@/components/ui/button";
@@ -24,7 +33,7 @@ interface PriceEntry {
   price: number;
 }
 
-interface TrackedProduct {
+export interface TrackedProduct {
   id: string;
   url: string;
   name: string | null;
